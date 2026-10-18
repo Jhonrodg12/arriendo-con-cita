@@ -29,7 +29,7 @@ Proyecto `arriendo-con-cita` (región us-east-1). El esquema está en `supabase/
 
 ## Pendientes antes de abrir al público
 
-- [ ] Completar `[correo de contacto de la plataforma]` en `privacidad.html` y revisar el texto con un abogado.
+- [ ] Revisar `privacidad.html` con un abogado y cambiar el correo personal por uno del proyecto.
 - [ ] Aplicar `20261018_limpieza_automatica.sql` (borrado automático de datos antiguos).
 - [ ] Recordatorios de visita por WhatsApp y límite de solicitudes para evitar spam.
 - [ ] Inicio de sesión con correo para propietarios con varios inmuebles.
