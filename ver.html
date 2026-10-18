@@ -20,6 +20,7 @@
 
   <section id="ficha" hidden style="display:grid;gap:16px">
     <div class="letrero"><h1 id="letrero-t">Se arrienda</h1><p>Sin llamadas: las respuestas y la agenda están aquí abajo.</p></div>
+    <div class="gal" id="gal" hidden><div class="gal-track" id="gal-track"></div><span class="gal-count" id="gal-count"></span></div>
     <div class="card">
       <div><h2 id="titulo"></h2><p class="muted" id="ubic"></p></div>
       <div class="specs" id="specs"></div>
@@ -41,7 +42,41 @@
 <script src="assets/common.js"></script>
 <script>
 const slug = new URLSearchParams(location.search).get('a') || '';
-let P = null, AVAIL = new Set(), TAKEN = new Set();
+let P = null, AVAIL = new Set(), TAKEN = new Set(), FOTOS = [];
+
+function renderGaleria() {
+  if (!FOTOS.length) return;
+  $('#gal').hidden = false;
+  $('#gal-track').innerHTML = FOTOS.map((u, i) => `<button type="button" data-foto="${i}" aria-label="Ver foto ${i + 1} en grande"><img src="${u}" alt="Foto ${i + 1} del inmueble" ${i ? 'loading="lazy"' : ''}></button>`).join('');
+  const contar = () => { const t = $('#gal-track'); $('#gal-count').textContent = `${Math.round(t.scrollLeft / t.clientWidth) + 1} / ${FOTOS.length}`; };
+  $('#gal-track').addEventListener('scroll', contar, { passive: true });
+  contar();
+  $('#gal-track').addEventListener('click', e => { const b = e.target.closest('[data-foto]'); if (b) abrirFoto(Number(b.dataset.foto)); });
+}
+
+function abrirFoto(i) {
+  const lb = document.createElement('div');
+  lb.className = 'lb'; lb.setAttribute('role', 'dialog'); lb.setAttribute('aria-label', 'Fotos del inmueble');
+  const ver = () => {
+    lb.innerHTML = `<img src="${FOTOS[i]}" alt="Foto ${i + 1} del inmueble"><button class="lb-x" aria-label="Cerrar">✕</button>`
+      + (FOTOS.length > 1 ? `<button class="lb-prev" aria-label="Foto anterior">‹</button><button class="lb-next" aria-label="Foto siguiente">›</button><span class="lb-n">${i + 1} / ${FOTOS.length}</span>` : '');
+    lb.querySelector('.lb-x').focus();
+  };
+  const cerrar = () => { lb.remove(); document.removeEventListener('keydown', teclas); document.body.style.overflow = ''; };
+  const mover = d => { i = (i + d + FOTOS.length) % FOTOS.length; ver(); };
+  const teclas = e => { if (e.key === 'Escape') cerrar(); if (e.key === 'ArrowRight') mover(1); if (e.key === 'ArrowLeft') mover(-1); };
+  lb.addEventListener('click', e => {
+    if (e.target.closest('.lb-prev')) return mover(-1);
+    if (e.target.closest('.lb-next')) return mover(1);
+    if (e.target.closest('.lb-x') || e.target === lb) cerrar();
+  });
+  let x0 = null;
+  lb.addEventListener('touchstart', e => (x0 = e.touches[0].clientX), { passive: true });
+  lb.addEventListener('touchend', e => { if (x0 === null) return; const dx = e.changedTouches[0].clientX - x0; if (Math.abs(dx) > 50 && FOTOS.length > 1) mover(dx < 0 ? 1 : -1); x0 = null; });
+  document.addEventListener('keydown', teclas);
+  document.body.style.overflow = 'hidden';
+  document.body.appendChild(lb); ver();
+}
 let F = { step: 0, d: {}, dia: null, hora: null, motivos: [], err: '', busy: false };
 
 async function cargar() {
@@ -49,14 +84,16 @@ async function cargar() {
   const { data, error } = await sb.from('properties').select('*').eq('slug', slug).maybeSingle();
   if (error || !data) return noEncontrado();
   P = data;
-  const [av, tk] = await Promise.all([
+  const [av, tk, ph] = await Promise.all([
     sb.from('availability').select('weekday,block').eq('property_id', P.id),
-    sb.rpc('taken_slots', { p_property: P.id })
+    sb.rpc('taken_slots', { p_property: P.id }),
+    sb.from('property_photos').select('path,position').eq('property_id', P.id).order('position')
   ]);
   AVAIL = dispFromArray(av.data);
+  FOTOS = (ph.data || []).map(x => fotoUrl(x.path));
   TAKEN = new Set((tk.data || []).map(x => x.visit_date + ' ' + x.visit_time.slice(0, 5)));
   $('#loading').hidden = true; $('#ficha').hidden = false;
-  renderFicha(); renderFlow();
+  renderFicha(); renderGaleria(); renderFlow();
 }
 function noEncontrado() { $('#loading').hidden = true; $('#notfound').hidden = false; }
 

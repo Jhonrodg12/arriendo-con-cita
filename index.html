@@ -33,6 +33,11 @@
   <form id="crear" class="card" novalidate>
     <h2>Crea la ficha de tu inmueble</h2>
     <div id="form-ficha"></div>
+    <div class="field"><span>Fotos del inmueble</span>
+      <p class="help">Hasta 8. La primera es la portada. Las reducimos para que carguen rápido y les quitamos la ubicación GPS.</p>
+      <div class="thumbs" id="thumbs"></div>
+      <input type="file" id="f-fotos" accept="image/*" multiple hidden>
+    </div>
     <div class="field"><span>¿Cuándo puedes mostrarlo?</span>
       <p class="help">Toca las franjas en que puedes recibir visitas. Cada franja se divide en citas de 30 minutos.</p>
       <div class="disp" id="disp"></div>
@@ -48,6 +53,7 @@
       <h2>Tu ficha está publicada</h2>
       <p class="muted">Guarda los dos enlaces. El del panel es privado: con él ves tus citas y editas la ficha.</p>
     </div>
+    <p class="box warn" id="fotos-aviso" hidden></p>
     <div class="card">
       <h3>1. Enlace para tu aviso (público)</h3>
       <div class="linkbox"><input readonly id="l-ficha"><button class="btn small" type="button" data-copy="l-ficha">Copiar</button></div>
@@ -82,6 +88,25 @@ $('#form-ficha').innerHTML = formFicha({});
 wireFormFicha($('#crear'), state);
 renderDisp($('#disp'), disp);
 
+// Fotos elegidas antes de crear la ficha (se suben al crearla)
+let fotos = [];
+function renderThumbs() {
+  $('#thumbs').innerHTML = fotos.map((f, i) => `<div class="thumb"><img src="${f.url}" alt="Foto ${i + 1}">${i === 0 ? '<span class="tag">Portada</span>' : `<button type="button" class="cov" data-cov="${i}">Portada</button>`}<button type="button" class="x" data-rm="${i}" aria-label="Quitar foto ${i + 1}">✕</button></div>`).join('')
+    + (fotos.length < MAX_FOTOS ? `<label class="addph" for="f-fotos">+ Agregar fotos</label>` : '');
+}
+renderThumbs();
+$('#f-fotos').addEventListener('change', e => {
+  const libres = MAX_FOTOS - fotos.length;
+  [...e.target.files].slice(0, libres).forEach(file => fotos.push({ file, url: URL.createObjectURL(file) }));
+  e.target.value = '';
+  renderThumbs();
+});
+$('#thumbs').addEventListener('click', e => {
+  const rm = e.target.closest('[data-rm]'), cv = e.target.closest('[data-cov]');
+  if (rm) { const [f] = fotos.splice(Number(rm.dataset.rm), 1); URL.revokeObjectURL(f.url); renderThumbs(); }
+  if (cv) { const [f] = fotos.splice(Number(cv.dataset.cov), 1); fotos.unshift(f); renderThumbs(); }
+});
+
 $('#crear').addEventListener('submit', async e => {
   e.preventDefault();
   const err = $('#err');
@@ -93,8 +118,15 @@ $('#crear').addEventListener('submit', async e => {
   const btn = $('#btn-crear'); btn.disabled = true; btn.textContent = 'Creando...';
   p.availability = dispToArray(disp);
   const { data, error } = await sb.rpc('create_property', { p });
+  if (error) { btn.disabled = false; btn.textContent = 'Crear mi ficha'; err.textContent = errMsg(error); err.hidden = false; return; }
+  if (fotos.length) {
+    const r = await subirFotos(data.slug, data.token, fotos.map(f => f.file), (i, n) => (btn.textContent = `Subiendo foto ${i} de ${n}...`));
+    if (r.fallas.length) {
+      $('#fotos-aviso').textContent = `${r.ok.length} de ${fotos.length} fotos quedaron publicadas. ${r.fallas[0]} Puedes volver a subirlas desde tu panel.`;
+      $('#fotos-aviso').hidden = false;
+    }
+  }
   btn.disabled = false; btn.textContent = 'Crear mi ficha';
-  if (error) { err.textContent = errMsg(error); err.hidden = false; return; }
   const fu = fichaUrl(data.slug), pu = panelUrl(data.slug, data.token);
   try { localStorage.setItem('acc-panel-' + data.slug, pu); } catch (_) {}
   $('#l-ficha').value = fu; $('#a-ver').href = fu;

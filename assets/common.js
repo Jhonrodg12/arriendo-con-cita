@@ -183,3 +183,61 @@ function leerFormFicha(root, state) {
   if (p.mode === 'cesion' && !p.assignment_authorized) errs.push('Para ceder el contrato necesitas la autorización del arrendador o la inmobiliaria.');
   return { p, errs };
 }
+
+// ---------- Fotos ----------
+const MAX_FOTOS = 8;
+function fotoUrl(path) { return CONFIG.url + '/storage/v1/object/public/fotos/' + path; }
+
+// Reduce la foto en el celular (máx. 1600 px, JPEG) antes de subirla.
+// Al redibujarla se pierden los metadatos, incluida la ubicación GPS de la cámara.
+function comprimirFoto(file, max = 1600) {
+  return new Promise((resolve, reject) => {
+    if (file.type && !/^image\//.test(file.type)) return reject(new Error('"' + file.name + '" no es una imagen.'));
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const r = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.naturalWidth * r); c.height = Math.round(img.naturalHeight * r);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      const intentar = q => c.toBlob(b => {
+        if (!b) return reject(new Error('No pudimos procesar esa imagen.'));
+        if (b.size > 1900000 && q > 0.5) return intentar(q - 0.15);
+        resolve(b);
+      }, 'image/jpeg', q);
+      intentar(0.82);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('No pudimos abrir "' + file.name + '". Prueba con una foto JPG o PNG.')); };
+    img.src = url;
+  });
+}
+
+async function fotosApi(body) {
+  const { data, error } = await sb.functions.invoke('fotos', { body });
+  if (error) {
+    let m = '';
+    try { m = (await error.context.json()).error; } catch (_) {}
+    throw new Error(m || 'No pudimos procesar la foto. Revisa tu conexión e intenta de nuevo.');
+  }
+  return data;
+}
+
+async function subirFoto(slug, token, file) {
+  const blob = await comprimirFoto(file);
+  const s = await fotosApi({ action: 'sign', slug, token });
+  const { error } = await sb.storage.from('fotos').uploadToSignedUrl(s.path, s.token, blob, { contentType: 'image/jpeg' });
+  if (error) throw new Error('No se pudo subir la foto. Revisa tu conexión.');
+  return (await fotosApi({ action: 'confirm', slug, token, path: s.path })).photo;
+}
+
+// Sube varias fotos en orden e informa el avance. Devuelve las subidas y los errores.
+async function subirFotos(slug, token, files, onProgress) {
+  const ok = [], fallas = [];
+  for (let i = 0; i < files.length; i++) {
+    onProgress && onProgress(i + 1, files.length);
+    try { ok.push(await subirFoto(slug, token, files[i])); }
+    catch (e) { fallas.push(e.message); if (/hasta \d+ fotos/.test(e.message)) break; }
+  }
+  return { ok, fallas };
+}

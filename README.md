@@ -7,6 +7,7 @@ Ficha de inmueble con prefiltro de requisitos y agenda de visitas, para propieta
 - **`index.html`**: el propietario crea la ficha (canon, administración, garantías, requisitos, mascotas, horarios). Recibe dos enlaces: la ficha pública y su panel privado.
 - **`ver.html?a=<slug>`**: ficha pública. El interesado ve las respuestas, llena el prefiltro (ingresos, garantía, reportes autodeclarados, titular, mascotas, mudanza) y, si cumple, agenda la visita.
 - **`panel.html#<slug>.<token>`**: panel privado del propietario. Ve visitas, escribe por WhatsApp, marca asistencia, ve motivos de descarte y edita la ficha.
+- **Fotos**: hasta 8 por inmueble. Se reducen en el celular (máx. 1600 px, JPEG, sin GPS) y se suben con una URL firmada que entrega la función de borde `supabase/functions/fotos`, que valida el enlace del dueño.
 - **`privacidad.html`**: términos y política de datos (borrador; completar el correo de contacto y revisar con un abogado).
 
 Es un sitio estático (HTML, CSS y JavaScript sin compilación) que habla con Supabase mediante `supabase-js`.
@@ -31,5 +32,7 @@ Proyecto `arriendo-con-cita` (región us-east-1). El esquema está en `supabase/
 
 - [ ] Revisar `privacidad.html` con un abogado y cambiar el correo personal por uno del proyecto.
 - [ ] Aplicar `20261018_limpieza_automatica.sql` (borrado automático de datos antiguos).
+- [ ] Quitar la extensión `pg_net`, instalada solo para probar la función de fotos.
+- [ ] Borrar las fotos del almacenamiento cuando se elimine una ficha.
 - [ ] Recordatorios de visita por WhatsApp y límite de solicitudes para evitar spam.
 - [ ] Inicio de sesión con correo para propietarios con varios inmuebles.

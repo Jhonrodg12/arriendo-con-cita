@@ -44,6 +44,15 @@
       <div class="row"><button class="btn ghost" type="button" data-copy="l-aviso">Copiar texto del aviso</button><a class="btn ghost" id="a-ver" target="_blank" rel="noopener">Ver ficha</a></div>
     </div>
 
+    <div class="card">
+      <h2>Fotos</h2>
+      <p class="help">Hasta 8. La primera es la portada de tu ficha.</p>
+      <div class="thumbs" id="thumbs"></div>
+      <input type="file" id="f-fotos" accept="image/*" multiple hidden>
+      <p class="progress" id="fotos-prog" hidden></p>
+      <p class="err" id="fotos-err" hidden></p>
+    </div>
+
     <form class="card" id="edit" novalidate>
       <h2>Editar ficha</h2>
       <div class="field"><span>Estado del aviso</span>
@@ -125,6 +134,7 @@ function render() {
   $('#descartes').innerHTML = Object.entries(cuenta).sort((a, b) => b[1] - a[1])
     .map(([m, n]) => `<div class="qa"><div><dt>${n} ${n === 1 ? 'persona' : 'personas'}</dt><dd>${esc(m)}</dd></div></div>`).join('');
 
+  renderFotos();
   $('#l-ficha').value = fichaUrl(slug); $('#a-ver').href = fichaUrl(slug);
   $('#l-aviso').value = textoAviso(p, slug);
 
@@ -138,6 +148,39 @@ function render() {
     syncEstado();
   }
 }
+let fotoPend = null, subiendo = false;
+function renderFotos() {
+  const fs = D.photos || [];
+  $('#thumbs').innerHTML = fs.map((f, i) => `<div class="thumb"><img src="${fotoUrl(f.path)}" alt="Foto ${i + 1}" loading="lazy">`
+    + (i === 0 ? '<span class="tag">Portada</span>' : `<button type="button" class="cov" data-cov="${f.id}">Portada</button>`)
+    + `<button type="button" class="x" data-rm="${f.id}" aria-label="Quitar foto ${i + 1}">${fotoPend === f.id ? '¿Quitar?' : '✕'}</button></div>`).join('')
+    + (fs.length < MAX_FOTOS && !subiendo ? `<label class="addph" for="f-fotos">+ Agregar fotos</label>` : '');
+}
+async function recargar() { const r = await sb.rpc('owner_get', { p_slug: slug, p_token: token }); if (r.data) { D = r.data; render(); } }
+
+$('#f-fotos').addEventListener('change', async e => {
+  const files = [...e.target.files].slice(0, MAX_FOTOS - (D.photos || []).length);
+  e.target.value = '';
+  if (!files.length) return;
+  subiendo = true; $('#fotos-err').hidden = true; renderFotos();
+  const prog = $('#fotos-prog'); prog.hidden = false;
+  const r = await subirFotos(slug, token, files, (i, n) => (prog.textContent = `Subiendo foto ${i} de ${n}...`));
+  subiendo = false; prog.hidden = true;
+  if (r.fallas.length) { $('#fotos-err').textContent = r.fallas[0]; $('#fotos-err').hidden = false; }
+  await recargar();
+});
+$('#thumbs').addEventListener('click', async e => {
+  const rm = e.target.closest('[data-rm]'), cv = e.target.closest('[data-cov]');
+  if (!rm && !cv) return;
+  const id = (rm || cv).dataset[rm ? 'rm' : 'cov'];
+  if (rm && fotoPend !== id) { fotoPend = id; return renderFotos(); }
+  fotoPend = null; $('#fotos-err').hidden = true;
+  (rm || cv).disabled = true;
+  try { await fotosApi({ action: rm ? 'delete' : 'cover', slug, token, id }); }
+  catch (err) { $('#fotos-err').textContent = err.message; $('#fotos-err').hidden = false; }
+  await recargar();
+});
+
 function syncEstado() { $$('#estado-seg .segb').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === estado)); }
 $('#estado-seg').onclick = e => { const b = e.target.closest('.segb'); if (!b) return; estado = b.dataset.v; syncEstado(); };
 
