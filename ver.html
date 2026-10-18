@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<title>Inmueble en arriendo · Arriendo con Cita</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&family=Figtree:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+<main class="wrap">
+  <div class="brand"><a href="./">Arriendo con Cita</a><span></span></div>
+  <p class="loading" id="loading">Cargando la ficha...</p>
+  <div class="card" id="notfound" hidden>
+    <h2>Este aviso ya no está disponible</h2>
+    <p class="muted">Puede que ya se haya arrendado o que el propietario lo haya pausado.</p>
+  </div>
+
+  <section id="ficha" hidden style="display:grid;gap:16px">
+    <div class="letrero"><h1 id="letrero-t">Se arrienda</h1><p>Sin llamadas: las respuestas y la agenda están aquí abajo.</p></div>
+    <div class="card">
+      <div><h2 id="titulo"></h2><p class="muted" id="ubic"></p></div>
+      <div class="specs" id="specs"></div>
+      <p id="extras" class="muted" hidden></p>
+      <h3>Lo que todos preguntan</h3>
+      <dl class="qa" id="qa"></dl>
+      <p class="box" id="req"></p>
+      <button class="btn" id="cta">Agendar una visita</button>
+    </div>
+    <div class="card" id="flow" hidden></div>
+    <p class="box warn">Nunca pagues ni envíes dinero para "separar" un inmueble antes de visitarlo y firmar el contrato.</p>
+  </section>
+
+  <p class="foot"><a href="./">¿Arriendas un inmueble? Crea tu ficha gratis en 5 minutos</a><a href="privacidad.html">Términos y política de datos</a></p>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="assets/config.js"></script>
+<script src="assets/common.js"></script>
+<script>
+const slug = new URLSearchParams(location.search).get('a') || '';
+let P = null, AVAIL = new Set(), TAKEN = new Set();
+let F = { step: 0, d: {}, dia: null, hora: null, motivos: [], err: '', busy: false };
+
+async function cargar() {
+  if (!/^[a-z0-9-]{4,60}$/.test(slug)) return noEncontrado();
+  const { data, error } = await sb.from('properties').select('*').eq('slug', slug).maybeSingle();
+  if (error || !data) return noEncontrado();
+  P = data;
+  const [av, tk] = await Promise.all([
+    sb.from('availability').select('weekday,block').eq('property_id', P.id),
+    sb.rpc('taken_slots', { p_property: P.id })
+  ]);
+  AVAIL = dispFromArray(av.data);
+  TAKEN = new Set((tk.data || []).map(x => x.visit_date + ' ' + x.visit_time.slice(0, 5)));
+  $('#loading').hidden = true; $('#ficha').hidden = false;
+  renderFicha(); renderFlow();
+}
+function noEncontrado() { $('#loading').hidden = true; $('#notfound').hidden = false; }
+
+function renderFicha() {
+  const ces = P.mode === 'cesion';
+  document.title = (ces ? 'Cesión de contrato: ' : 'Se arrienda: ') + P.title;
+  $('#letrero-t').textContent = ces ? 'Se cede contrato' : 'Se arrienda';
+  $('#titulo').textContent = P.title;
+  $('#ubic').textContent = [P.neighborhood, P.municipality].filter(Boolean).join(' · ');
+  const s = [];
+  if (P.bedrooms != null) s.push(`<span><b>${P.bedrooms}</b> hab.</span>`);
+  if (P.bathrooms != null) s.push(`<span><b>${P.bathrooms}</b> baños</span>`);
+  if (P.area_m2) s.push(`<span><b>${String(P.area_m2).replace('.', ',').replace(/,0$/, '')}</b> m²</span>`);
+  if (P.estrato) s.push(`<span>Estrato <b>${P.estrato}</b></span>`);
+  if (P.floor != null) s.push(`<span>Piso <b>${P.floor}</b></span>`);
+  $('#specs').innerHTML = s.join('');
+  if (P.extras) { $('#extras').textContent = P.extras; $('#extras').hidden = false; }
+  const gar = P.guarantees.map((g, i) => i ? GAR[g].charAt(0).toLowerCase() + GAR[g].slice(1) : GAR[g]).join(', ').replace(/, ([^,]*)$/, ' o $1');
+  const rows = ces ? [
+    ['Canon vigente', cop(P.rent)],
+    ['Administración', P.admin_fee ? cop(P.admin_fee) + ' aparte del canon' : 'Incluida o sin administración'],
+    ['¿Con inmobiliaria?', 'El contrato está con ' + (P.agency_name || 'el arrendador') + ', que debe aprobar al nuevo arrendatario.'],
+    ['Contrato vigente hasta', P.lease_end ? fechaCorta(P.lease_end) : 'Por confirmar'],
+    ['Garantía', 'La que pida ' + (P.agency_name || 'el arrendador') + ' en su estudio.'],
+    ['Mascotas', P.pets_allowed ? 'Sí se aceptan' : 'No se aceptan']
+  ] : [
+    ['Canon mensual', cop(P.rent)],
+    ['Administración', P.admin_fee ? cop(P.admin_fee) + ' aparte del canon' : 'Incluida o sin administración'],
+    ['¿Con inmobiliaria?', 'No. Trato directo con el propietario.'],
+    ['Garantía', gar + '.'],
+    ['Mascotas', P.pets_allowed ? 'Sí se aceptan' : 'No se aceptan'],
+    ['Disponible', P.available_from || 'Inmediato']
+  ];
+  $('#qa').innerHTML = rows.map(([t, d]) => `<div><dt>${esc(t)}</dt><dd>${esc(d)}</dd></div>`).join('');
+  $('#req').innerHTML = `Requisito: ingresos del hogar desde <b>${cop(P.rent * P.income_multiplier)}</b> al mes (${multTxt(P.income_multiplier)} veces el canon). Puedes sumar los ingresos de quienes vivirán contigo.`;
+}
+
+function slotsDe(d) {
+  const k = dkey(d), now = new Date();
+  const lim = new Date(now.getTime() + 60 * 60000);
+  return Object.keys(FR).filter(f => AVAIL.has(d.getDay() + ':' + f)).flatMap(f => FR[f].s)
+    .filter(h => { const [H, M] = h.split(':').map(Number); const t = new Date(d); t.setHours(H, M, 0, 0); return t >= lim; })
+    .map(h => ({ h, libre: !TAKEN.has(k + ' ' + h) }));
+}
+
+function stepsHead() {
+  const st = ['Requisitos', 'Horario', 'Tus datos'];
+  return `<ol class="steps">${st.map((s, i) => `<li class="${i + 1 === F.step ? 'on' : (i + 1 < F.step ? 'done' : '')}"><span>${i + 1 < F.step ? '✓' : i + 1}</span>${s}</li>`).join('')}</ol>`;
+}
+const sel = (v, o) => v === o ? 'selected' : '';
+
+function renderFlow() {
+  const box = $('#flow');
+  $('#cta').hidden = F.step !== 0;
+  box.hidden = F.step === 0;
+  if (F.step === 0) { box.innerHTML = ''; return; }
+  const d = F.d, err = F.err ? `<p class="err">${esc(F.err)}</p>` : '';
+  let h = '';
+  if (F.step === 1) {
+    const ops = [...P.guarantees, 'no_se'];
+    h = stepsHead() + `
+    <form id="f1" novalidate>
+      <h2>Antes de agendar, cuéntanos lo básico</h2>
+      <p class="help">Si no cumples, no guardamos tus respuestas.</p>
+      <label>Ingresos mensuales del hogar (aproximado)
+        <input id="f-ing" inputmode="numeric" placeholder="Ej: 3.000.000" value="${d.income ? d.income.toLocaleString('es-CO') : ''}">
+        <span class="help" id="ing-help">Suma los ingresos de quienes vivirán contigo o del titular del contrato.</span>
+      </label>
+      <div class="grid2">
+        <label>Personas que vivirían<select id="f-per">${[1, 2, 3, 4, 5, 6, 7, 8].map(n => `<option ${d.household == n ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+        <label>¿Mascotas?<select id="f-mas"><option value="0">No</option><option value="1" ${d.pets ? 'selected' : ''}>Sí</option></select></label>
+      </div>
+      <label>¿Cómo respaldarías el contrato?<select id="f-gar">${ops.map(o => `<option value="${o}" ${sel(d.guarantee, o)}>${esc(P.mode === 'cesion' && o === 'poliza' ? 'Puedo pasar el estudio de la inmobiliaria o aseguradora' : GAR_INTERESADO[o])}</option>`).join('')}</select></label>
+      <label>¿Tienes reportes negativos en centrales de riesgo?
+        <select id="f-rep"><option value="no" ${sel(d.credit, 'no')}>No</option><option value="si" ${sel(d.credit, 'si')}>Sí</option><option value="no_se" ${sel(d.credit, 'no_se')}>No sé</option></select>
+        <span class="help">Es autodeclarado. Si tienes reportes, puedes continuar con codeudor${P.guarantees.includes('fianza') ? ' o fianza' : ''}.</span>
+      </label>
+      <label>¿A nombre de quién quedaría el contrato?
+        <select id="f-tit"><option value="propio" ${sel(d.titular, 'propio')}>A mi nombre</option><option value="otra_persona" ${sel(d.titular, 'otra_persona')}>De otra persona que aporta los ingresos</option></select>
+      </label>
+      <label>¿Cuándo te mudarías?<select id="f-mud">${Object.entries(MUDANZA).map(([k, v]) => `<option value="${k}" ${sel(d.move_in, k)}>${v}</option>`).join('')}</select></label>
+      ${err}
+      <div class="row"><button type="button" class="btn ghost" data-a="cancel">Volver</button><button class="btn" type="submit" ${F.busy ? 'disabled' : ''}>${F.busy ? 'Revisando...' : 'Ver horarios'}</button></div>
+    </form>`;
+  } else if (F.step === 'no') {
+    h = `<div style="display:grid;gap:10px">
+      <h2>Por ahora este inmueble no se ajusta</h2>
+      <ul style="margin:0;padding-left:18px">${F.motivos.map(m => `<li>${esc(m)}</li>`).join('')}</ul>
+      <p class="muted">Te lo decimos de una vez para que no pierdas tiempo esperando respuesta.</p>
+      <button class="btn ghost" data-a="cancel">Volver a la ficha</button></div>`;
+  } else if (F.step === 2) {
+    const ds = dias(14);
+    if (!F.dia) { const f = ds.find(x => slotsDe(x).some(s => s.libre)); F.dia = f ? dkey(f) : null; }
+    const ss = F.dia ? slotsDe(parseKey(F.dia)) : [];
+    h = stepsHead() + `
+      <h2>Elige día y hora de la visita</h2>
+      <div class="days">${ds.map(x => { const k = dkey(x), libre = slotsDe(x).some(s => s.libre); return `<button class="day" data-a="dia" data-v="${k}" aria-pressed="${k === F.dia}" ${libre ? '' : 'disabled'}><small>${DC[x.getDay()]}</small><b>${x.getDate()}</b></button>`; }).join('')}</div>
+      ${F.dia ? `<p class="muted" style="text-transform:capitalize">${esc(fechaLarga(F.dia))}</p>
+      <div class="slots">${ss.map(s => `<button class="slot" data-a="hora" data-v="${s.h}" aria-pressed="${s.h === F.hora}" ${s.libre ? '' : 'disabled'}>${hora12(s.h)}</button>`).join('')}</div>`
+      : `<p class="muted">El propietario no tiene horarios libres en las próximas dos semanas.</p>`}
+      ${err}
+      <div class="row"><button class="btn ghost" data-a="back">Atrás</button><button class="btn" data-a="next2" ${F.hora ? '' : 'disabled'}>Continuar</button></div>`;
+  } else if (F.step === 3) {
+    h = stepsHead() + `
+    <form id="f3" novalidate>
+      <h2>¿A nombre de quién agendamos?</h2>
+      <p class="box">Visita: <b style="text-transform:capitalize">${esc(fechaLarga(F.dia))}</b>, ${hora12(F.hora)}</p>
+      <label>Nombre<input id="f-nom" autocomplete="name" maxlength="80" value="${esc(d.name || '')}"></label>
+      <label>WhatsApp<input id="f-tel" inputmode="tel" autocomplete="tel" maxlength="20" placeholder="300 000 0000" value="${esc(d.whatsapp || '')}"></label>
+      <label class="check"><input type="checkbox" id="f-ok" ${d.consent ? 'checked' : ''}>Autorizo que el propietario de este inmueble use mis datos para coordinar la visita y el arriendo, según la <a href="privacidad.html" target="_blank" rel="noopener">política de datos</a>.</label>
+      ${err}
+      <div class="row"><button type="button" class="btn ghost" data-a="back">Cambiar hora</button><button class="btn" type="submit" ${F.busy ? 'disabled' : ''}>${F.busy ? 'Agendando...' : 'Confirmar visita'}</button></div>
+    </form>`;
+  } else if (F.step === 4) {
+    h = `<div class="center" style="display:grid;gap:10px">
+      <div class="big-ok"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+      <h2>Visita agendada para el ${esc(fechaLarga(F.dia))} a las ${hora12(F.hora)}</h2>
+      <p class="muted">El propietario ya la ve en su agenda y te escribirá por WhatsApp para confirmar y darte la dirección exacta.</p>
+      <button class="btn ghost" data-a="cancel">Volver a la ficha</button></div>`;
+  }
+  box.innerHTML = h;
+}
+
+document.addEventListener('click', e => {
+  if (e.target.id === 'cta') { F = { step: 1, d: {}, dia: null, hora: null, motivos: [], err: '' }; renderFlow(); $('#flow').scrollIntoView({ block: 'start', behavior: 'smooth' }); return; }
+  const b = e.target.closest('[data-a]'); if (!b) return;
+  const a = b.dataset.a;
+  if (a === 'cancel') { F = { step: 0, d: {}, dia: null, hora: null, motivos: [], err: '' }; renderFlow(); }
+  if (a === 'back') { F.err = ''; F.step = F.step === 3 ? 2 : 1; renderFlow(); }
+  if (a === 'dia') { F.dia = b.dataset.v; F.hora = null; F.err = ''; renderFlow(); }
+  if (a === 'hora') { F.hora = b.dataset.v; renderFlow(); }
+  if (a === 'next2' && F.hora) { F.step = 3; F.err = ''; renderFlow(); }
+});
+
+document.addEventListener('input', e => {
+  if (e.target.id !== 'f-ing') return;
+  const v = num(e.target.value), h = $('#ing-help');
+  h.textContent = v ? `${cop(v)} equivale a ${(v / P.rent).toFixed(1).replace('.', ',')} veces el canon.` : 'Suma los ingresos de quienes vivirán contigo o del titular del contrato.';
+});
+
+document.addEventListener('submit', async e => {
+  e.preventDefault();
+  if (e.target.id === 'f1') {
+    const d = { income: num($('#f-ing').value), household: Number($('#f-per').value), pets: $('#f-mas').value === '1', guarantee: $('#f-gar').value, credit: $('#f-rep').value, titular: $('#f-tit').value, move_in: $('#f-mud').value };
+    F.d = { ...F.d, ...d };
+    if (!d.income) { F.err = 'Escribe los ingresos mensuales del hogar para continuar.'; return renderFlow(); }
+    F.err = ''; F.busy = true; renderFlow();
+    const { data, error } = await sb.rpc('check_applicant', { p_property: P.id, p_income: d.income, p_pets: d.pets, p_guarantee: d.guarantee, p_credit: d.credit });
+    F.busy = false;
+    if (error) { F.err = errMsg(error); return renderFlow(); }
+    if (data && data.length) { F.motivos = data.map(m => m.replace('no se aceptan', 'aquí no se aceptan').replace('Ofrece una garantía que no aceptas', 'La garantía que ofreces no está entre las que acepta el propietario')); F.step = 'no'; }
+    else { F.step = 2; F.dia = null; F.hora = null; }
+    renderFlow();
+  }
+  if (e.target.id === 'f3') {
+    const name = $('#f-nom').value.trim(), whatsapp = $('#f-tel').value.trim(), consent = $('#f-ok').checked;
+    Object.assign(F.d, { name, whatsapp, consent });
+    if (name.length < 2 || whatsapp.replace(/\D/g, '').length < 7) { F.err = 'Escribe tu nombre y un número de WhatsApp para que el propietario te confirme.'; return renderFlow(); }
+    if (!consent) { F.err = 'Para agendar necesitamos tu autorización de datos.'; return renderFlow(); }
+    F.err = ''; F.busy = true; renderFlow();
+    const d = F.d;
+    const { error } = await sb.rpc('book_visit', { p_property: P.id, p_date: F.dia, p_time: F.hora, p_name: name, p_whatsapp: whatsapp, p_income: d.income, p_household: d.household, p_pets: d.pets, p_guarantee: d.guarantee, p_credit: d.credit, p_titular: d.titular, p_move_in: d.move_in, p_consent: true });
+    F.busy = false;
+    if (error) {
+      F.err = errMsg(error);
+      if (/ocupar|pasó|no recibe/.test(F.err)) {
+        const tk = await sb.rpc('taken_slots', { p_property: P.id });
+        TAKEN = new Set((tk.data || []).map(x => x.visit_date + ' ' + x.visit_time.slice(0, 5)));
+        F.step = 2; F.hora = null;
+      }
+      return renderFlow();
+    }
+    TAKEN.add(F.dia + ' ' + F.hora);
+    F.step = 4; renderFlow();
+  }
+});
+
+cargar();
+</script>
+</body>
+</html>

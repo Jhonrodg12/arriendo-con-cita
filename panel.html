@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
+<title>Mi panel · Arriendo con Cita</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&family=Figtree:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+<main class="wrap">
+  <div class="brand"><a href="./">Arriendo con Cita</a><span>Panel privado</span></div>
+  <p class="loading" id="loading">Cargando tu panel...</p>
+  <div class="card" id="bad" hidden>
+    <h2>Este enlace de panel no es válido</h2>
+    <p class="muted">Revisa que copiaste el enlace completo que recibiste al crear la ficha.</p>
+  </div>
+
+  <section id="app" hidden style="display:grid;gap:16px">
+    <div>
+      <h2 id="p-title"></h2>
+      <p class="muted" id="p-sub"></p>
+    </div>
+    <div class="stats" id="stats"></div>
+
+    <div class="card">
+      <h2>Próximas visitas</h2>
+      <div id="visitas"></div>
+    </div>
+
+    <div class="card" id="desc-card">
+      <h2>No cumplieron requisitos</h2>
+      <p class="muted">Personas que llenaron el prefiltro y no agendaron. No guardamos sus datos personales, solo el motivo.</p>
+      <div id="descartes"></div>
+    </div>
+
+    <div class="card">
+      <h2>Comparte tu ficha</h2>
+      <div class="linkbox"><input readonly id="l-ficha"><button class="btn small" type="button" data-copy="l-ficha">Copiar</button></div>
+      <textarea readonly id="l-aviso" rows="6"></textarea>
+      <div class="row"><button class="btn ghost" type="button" data-copy="l-aviso">Copiar texto del aviso</button><a class="btn ghost" id="a-ver" target="_blank" rel="noopener">Ver ficha</a></div>
+    </div>
+
+    <form class="card" id="edit" novalidate>
+      <h2>Editar ficha</h2>
+      <div class="field"><span>Estado del aviso</span>
+        <div class="seg" id="estado-seg">
+          <button type="button" class="segb" data-v="activo">Activo</button>
+          <button type="button" class="segb" data-v="pausado">Pausado</button>
+          <button type="button" class="segb" data-v="arrendado">Arrendado</button>
+        </div>
+        <p class="help">Pausado o arrendado oculta la ficha y nadie más puede agendar.</p>
+      </div>
+      <div id="form-ficha"></div>
+      <div class="field"><span>Cuándo puedes mostrarlo</span><div class="disp" id="disp"></div></div>
+      <p class="err" id="err" hidden></p>
+      <button class="btn" type="submit" id="btn-save">Guardar cambios</button>
+    </form>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="assets/config.js"></script>
+<script src="assets/common.js"></script>
+<script>
+const [slug, token] = decodeURIComponent(location.hash.slice(1)).split('.');
+let D = null, state = {}, disp = new Set(), estado = 'activo', pending = null;
+
+async function cargar() {
+  if (!slug || !token) return malo();
+  const { data, error } = await sb.rpc('owner_get', { p_slug: slug, p_token: token });
+  if (error || !data) return malo();
+  D = data;
+  $('#loading').hidden = true; $('#app').hidden = false;
+  render();
+}
+function malo() { $('#loading').hidden = true; $('#bad').hidden = false; }
+
+function render() {
+  const p = D.property;
+  $('#p-title').textContent = p.title;
+  const est = { activo: 'Aviso activo', pausado: 'Aviso pausado', arrendado: 'Arrendado' }[p.status];
+  $('#p-sub').textContent = `${est} · ${p.mode === 'cesion' ? 'Cesión de contrato' : 'Arriendo'} · ${cop(p.rent)}`;
+  const hoy = dkey(new Date());
+  const prox = D.appointments.filter(a => a.status === 'agendada' && a.visit_date >= hoy);
+  const total = D.appointments.length + D.rejections.length;
+  $('#stats').innerHTML = [[total, 'personas llenaron el prefiltro'], [D.appointments.length, 'cumplieron y agendaron'], [prox.length, 'visitas por hacer']]
+    .map(([n, t]) => `<div class="stat"><b>${n}</b><span>${t}</span></div>`).join('');
+
+  const lista = D.appointments.filter(a => a.status !== 'cancelada' && (a.visit_date >= hoy || a.status === 'agendada'));
+  $('#visitas').innerHTML = lista.length ? lista.map(a => {
+    const d = parseKey(a.visit_date), r = (a.income_declared / p.rent).toFixed(1).replace('.', ',');
+    const hora = a.visit_time.slice(0, 5);
+    const msg = `Hola ${a.name.split(' ')[0]}, te escribo por la visita al inmueble "${p.title}" el ${fechaLarga(a.visit_date)} a las ${hora12(hora)}. ¿Me confirmas que vienes? Te envío la dirección exacta.`;
+    const chipEstado = { agendada: '', realizada: '<span class="chip ok">Realizada</span>', no_asistio: '<span class="chip bad">No asistió</span>', cancelada: '<span class="chip bad">Cancelada</span>' }[a.status];
+    return `<div class="visit">
+      <div class="when"><small>${DC[d.getDay()]}</small><b>${d.getDate()}</b><span>${hora12(hora)}</span></div>
+      <div style="min-width:0">
+        <div class="vname">${esc(a.name)} ${chipEstado}</div>
+        <div class="muted">WhatsApp ${esc(a.whatsapp)}</div>
+        <div class="chips">
+          <span class="chip ok">Ingresos ${r}× canon</span>
+          <span class="chip">${esc(GAR_INTERESADO[a.guarantee] ? { poliza: 'Pasaría estudio', codeudor: 'Con codeudor', fianza: 'Con fianza', no_se: 'Garantía por definir' }[a.guarantee] : a.guarantee)}</span>
+          ${a.credit_report === 'si' ? '<span class="chip warn">Declara reportes</span>' : a.credit_report === 'no_se' ? '<span class="chip">No sabe si tiene reportes</span>' : ''}
+          ${a.titular === 'otra_persona' ? '<span class="chip">Titular: otra persona</span>' : ''}
+          <span class="chip">${a.household_size} ${a.household_size == 1 ? 'persona' : 'personas'}</span>
+          ${a.has_pets ? '<span class="chip">Con mascota</span>' : ''}
+          <span class="chip">Mudanza: ${esc(MUDANZA[a.move_in])}</span>
+        </div>
+        ${a.status === 'agendada' ? `<div class="row" style="align-items:center">
+          <a class="btn small" href="${waLink(a.whatsapp, msg)}" target="_blank" rel="noopener">Escribir por WhatsApp</a>
+          <button class="link" data-st="realizada" data-id="${a.id}">Realizada</button>
+          <button class="link" data-st="no_asistio" data-id="${a.id}">No asistió</button>
+          <button class="link danger" data-st="cancelada" data-id="${a.id}">${pending === a.id ? 'Toca otra vez para cancelar' : 'Cancelar'}</button>
+        </div>` : ''}
+      </div></div>`;
+  }).join('') : '<p class="muted">Todavía no hay visitas. Cuando alguien que cumple agende, aparece aquí.</p>';
+
+  $('#desc-card').hidden = !D.rejections.length;
+  const cuenta = {};
+  D.rejections.forEach(r => r.reasons.forEach(m => (cuenta[m] = (cuenta[m] || 0) + 1)));
+  $('#descartes').innerHTML = Object.entries(cuenta).sort((a, b) => b[1] - a[1])
+    .map(([m, n]) => `<div class="qa"><div><dt>${n} ${n === 1 ? 'persona' : 'personas'}</dt><dd>${esc(m)}</dd></div></div>`).join('');
+
+  $('#l-ficha').value = fichaUrl(slug); $('#a-ver').href = fichaUrl(slug);
+  $('#l-aviso').value = textoAviso(p, slug);
+
+  if (!state.ready) {
+    state = { ready: true, mode: p.mode, pets: p.pets_allowed };
+    estado = p.status;
+    $('#form-ficha').innerHTML = formFicha(p);
+    wireFormFicha($('#edit'), state);
+    disp = dispFromArray(D.availability);
+    renderDisp($('#disp'), disp);
+    syncEstado();
+  }
+}
+function syncEstado() { $$('#estado-seg .segb').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === estado)); }
+$('#estado-seg').onclick = e => { const b = e.target.closest('.segb'); if (!b) return; estado = b.dataset.v; syncEstado(); };
+
+document.addEventListener('click', async e => {
+  const c = e.target.closest('[data-copy]'); if (c) return copiar($('#' + c.dataset.copy).value, c);
+  const b = e.target.closest('[data-st]'); if (!b) return;
+  const id = b.dataset.id, st = b.dataset.st;
+  if (st === 'cancelada' && pending !== id) { pending = id; return render(); }
+  pending = null;
+  const { error } = await sb.rpc('owner_set_appointment_status', { p_slug: slug, p_token: token, p_id: id, p_status: st });
+  if (error) return alert(errMsg(error));
+  const a = D.appointments.find(x => x.id === id); if (a) a.status = st;
+  render();
+});
+
+$('#edit').addEventListener('submit', async e => {
+  e.preventDefault();
+  const err = $('#err');
+  const { p, errs } = leerFormFicha($('#edit'), state);
+  if (!disp.size) errs.push('Marca al menos una franja para recibir visitas.');
+  if (errs.length) { err.textContent = errs.join(' '); err.hidden = false; return; }
+  err.hidden = true;
+  p.status = estado; p.availability = dispToArray(disp);
+  const btn = $('#btn-save'); btn.disabled = true; btn.textContent = 'Guardando...';
+  const { error } = await sb.rpc('owner_update_property', { p_slug: slug, p_token: token, p });
+  btn.disabled = false;
+  if (error) { btn.textContent = 'Guardar cambios'; err.textContent = errMsg(error); err.hidden = false; return; }
+  btn.textContent = 'Guardado';
+  setTimeout(() => (btn.textContent = 'Guardar cambios'), 1800);
+  const r = await sb.rpc('owner_get', { p_slug: slug, p_token: token });
+  if (r.data) { D = r.data; render(); }
+});
+
+window.addEventListener('hashchange', () => location.reload());
+cargar();
+</script>
+</body>
+</html>

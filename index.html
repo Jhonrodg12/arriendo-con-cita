@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<title>Arriendo con Cita</title>
+<meta name="description" content="Crea gratis la ficha de tu inmueble: responde lo que todos preguntan, filtra a los interesados y recibe visitas agendadas.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&family=Figtree:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+<main class="wrap">
+  <div class="brand"><a href="./">Arriendo con Cita</a><span>Beta</span></div>
+
+  <section id="intro" style="display:grid;gap:16px">
+    <div class="letrero">
+      <h1>Deja de contestar lo mismo</h1>
+      <p>Una ficha con las respuestas y una agenda de visitas para tu aviso.</p>
+    </div>
+    <div class="card">
+      <h2>Así funciona</h2>
+      <ol style="margin:0;padding-left:20px;display:grid;gap:6px">
+        <li>Creas la ficha de tu inmueble en 5 minutos.</li>
+        <li>Pegas el enlace en tu aviso de Marketplace, Fincaraíz o WhatsApp.</li>
+        <li>Los interesados ven el canon, la garantía y los requisitos, y solo quienes cumplen agendan la visita en tus horarios.</li>
+      </ol>
+      <p class="muted">Gratis durante la beta. También sirve para ceder un contrato de arriendo.</p>
+    </div>
+  </section>
+
+  <form id="crear" class="card" novalidate>
+    <h2>Crea la ficha de tu inmueble</h2>
+    <div id="form-ficha"></div>
+    <div class="field"><span>¿Cuándo puedes mostrarlo?</span>
+      <p class="help">Toca las franjas en que puedes recibir visitas. Cada franja se divide en citas de 30 minutos.</p>
+      <div class="disp" id="disp"></div>
+    </div>
+    <label class="check"><input type="checkbox" id="f-terms">Acepto los <a href="privacidad.html" target="_blank" rel="noopener">términos y la política de datos</a>. Usaré los datos de los interesados solo para coordinar visitas y el arriendo.</label>
+    <p class="err" id="err" hidden></p>
+    <button class="btn" type="submit" id="btn-crear">Crear mi ficha</button>
+  </form>
+
+  <section id="listo" hidden style="display:grid;gap:16px">
+    <div class="card center">
+      <div class="big-ok"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+      <h2>Tu ficha está publicada</h2>
+      <p class="muted">Guarda los dos enlaces. El del panel es privado: con él ves tus citas y editas la ficha.</p>
+    </div>
+    <div class="card">
+      <h3>1. Enlace para tu aviso (público)</h3>
+      <div class="linkbox"><input readonly id="l-ficha"><button class="btn small" type="button" data-copy="l-ficha">Copiar</button></div>
+      <a class="btn ghost" id="a-ver" target="_blank" rel="noopener">Ver mi ficha</a>
+    </div>
+    <div class="card">
+      <h3>2. Tu panel (privado, no lo compartas)</h3>
+      <div class="linkbox"><input readonly id="l-panel"><button class="btn small" type="button" data-copy="l-panel">Copiar</button></div>
+      <p class="box warn">Si pierdes este enlace no podrás ver tus citas. Envíatelo a tu propio WhatsApp o guárdalo en tus notas.</p>
+      <div class="row">
+        <a class="btn" id="a-wa-self" target="_blank" rel="noopener">Enviármelo por WhatsApp</a>
+        <a class="btn ghost" id="a-panel">Abrir mi panel</a>
+      </div>
+    </div>
+    <div class="card">
+      <h3>3. Texto listo para tu aviso</h3>
+      <textarea readonly id="l-aviso" rows="6"></textarea>
+      <button class="btn ghost" type="button" data-copy="l-aviso">Copiar texto</button>
+    </div>
+  </section>
+
+  <p class="foot"><span>Nunca pagues ni envíes dinero antes de visitar el inmueble y firmar el contrato.</span><a href="privacidad.html">Términos y política de datos</a></p>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="assets/config.js"></script>
+<script src="assets/common.js"></script>
+<script>
+const state = { mode: 'arriendo', pets: true };
+const disp = new Set(['1:noche', '2:noche', '3:noche', '4:noche', '5:noche', '6:manana']);
+$('#form-ficha').innerHTML = formFicha({});
+wireFormFicha($('#crear'), state);
+renderDisp($('#disp'), disp);
+
+$('#crear').addEventListener('submit', async e => {
+  e.preventDefault();
+  const err = $('#err');
+  const { p, errs } = leerFormFicha($('#crear'), state);
+  if (!disp.size) errs.push('Marca al menos una franja para recibir visitas.');
+  if (!$('#f-terms').checked) errs.push('Debes aceptar los términos y la política de datos.');
+  if (errs.length) { err.textContent = errs.join(' '); err.hidden = false; return; }
+  err.hidden = true;
+  const btn = $('#btn-crear'); btn.disabled = true; btn.textContent = 'Creando...';
+  p.availability = dispToArray(disp);
+  const { data, error } = await sb.rpc('create_property', { p });
+  btn.disabled = false; btn.textContent = 'Crear mi ficha';
+  if (error) { err.textContent = errMsg(error); err.hidden = false; return; }
+  const fu = fichaUrl(data.slug), pu = panelUrl(data.slug, data.token);
+  try { localStorage.setItem('acc-panel-' + data.slug, pu); } catch (_) {}
+  $('#l-ficha').value = fu; $('#a-ver').href = fu;
+  $('#l-panel').value = pu; $('#a-panel').href = pu;
+  $('#a-wa-self').href = waShare('Enlace privado del panel de mi ficha de arriendo (no compartir):\n' + pu);
+  $('#l-aviso').value = textoAviso(p, data.slug);
+  $('#crear').hidden = true; $('#intro').hidden = true; $('#listo').hidden = false;
+  window.scrollTo({ top: 0 });
+});
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-copy]'); if (b) copiar($('#' + b.dataset.copy).value, b);
+});
+</script>
+</body>
+</html>
